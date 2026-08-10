@@ -160,6 +160,7 @@ final class RecordingSourceWindowController: NSWindowController {
     private var displays: [SCDisplay] = []
     private var windows: [SCWindow] = []
     private var applications: [SCRunningApplication] = []
+    private var applicationIconCache: [pid_t: NSImage] = [:]
     private var selectedRegion: CGRect?
     private var regionSelector: RegionSelectionController?
 
@@ -371,16 +372,19 @@ final class RecordingSourceWindowController: NSWindowController {
         case .display, .region:
             for (index, display) in displays.enumerated() {
                 sourcePopup.addItem(withTitle: "显示器 \(index + 1) · \(display.width)×\(display.height)")
+                sourcePopup.lastItem?.image = sourceIcon(systemName: "display")
             }
         case .window:
             for window in windows {
                 let app = window.owningApplication?.applicationName ?? "应用"
                 let title = (window.title?.isEmpty == false) ? window.title! : "未命名窗口"
                 sourcePopup.addItem(withTitle: "\(app) · \(title)")
+                sourcePopup.lastItem?.image = applicationIcon(for: window.owningApplication)
             }
         case .application:
             for application in applications {
                 sourcePopup.addItem(withTitle: application.applicationName)
+                sourcePopup.lastItem?.image = applicationIcon(for: application)
             }
         }
 
@@ -486,6 +490,28 @@ final class RecordingSourceWindowController: NSWindowController {
         displays.max { first, second in
             first.frame.intersection(rect).area < second.frame.intersection(rect).area
         }
+    }
+
+    private func applicationIcon(for application: SCRunningApplication?) -> NSImage? {
+        guard let application else { return sourceIcon(systemName: "app.fill") }
+        if let cached = applicationIconCache[application.processID] { return cached }
+
+        let image: NSImage
+        if let bundleURL = NSRunningApplication(processIdentifier: application.processID)?.bundleURL {
+            image = NSWorkspace.shared.icon(forFile: bundleURL.path)
+        } else {
+            image = sourceIcon(systemName: "app.fill") ?? NSImage(size: NSSize(width: 16, height: 16))
+        }
+        image.size = NSSize(width: 16, height: 16)
+        applicationIconCache[application.processID] = image
+        return image
+    }
+
+    private func sourceIcon(systemName: String) -> NSImage? {
+        guard let image = NSImage(systemSymbolName: systemName, accessibilityDescription: nil) else { return nil }
+        image.size = NSSize(width: 16, height: 16)
+        image.isTemplate = true
+        return image
     }
 }
 

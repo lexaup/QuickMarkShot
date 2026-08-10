@@ -265,6 +265,11 @@ final class AnnotationCanvas: NSView {
         mark.color.setStroke()
         mark.color.setFill()
 
+        if mark.tool == .arrow {
+            drawArrow(from: start, to: end, lineWidth: lineWidth, color: mark.color)
+            return
+        }
+
         let path: NSBezierPath
         switch mark.tool {
         case .rectangle:
@@ -295,13 +300,9 @@ final class AnnotationCanvas: NSView {
         path.lineCapStyle = .round
         path.lineJoinStyle = .round
         path.stroke()
-
-        if mark.tool == .arrow {
-            drawArrowHead(from: start, to: end, lineWidth: lineWidth, color: mark.color)
-        }
     }
 
-    private func drawArrowHead(from start: CGPoint, to end: CGPoint, lineWidth: CGFloat, color: NSColor) {
+    private func drawArrow(from start: CGPoint, to end: CGPoint, lineWidth: CGFloat, color: NSColor) {
         let dx = end.x - start.x
         let dy = end.y - start.y
         let length = hypot(dx, dy)
@@ -309,22 +310,35 @@ final class AnnotationCanvas: NSView {
 
         let ux = dx / length
         let uy = dy / length
-        let headLength = min(max(12, lineWidth * 4.2), max(12, length * 0.42))
-        let headWidth = headLength * 0.58
-        let base = CGPoint(x: end.x - ux * headLength, y: end.y - uy * headLength)
         let perpendicular = CGPoint(x: -uy, y: ux)
-        let left = CGPoint(x: base.x + perpendicular.x * headWidth / 2,
-                           y: base.y + perpendicular.y * headWidth / 2)
-        let right = CGPoint(x: base.x - perpendicular.x * headWidth / 2,
-                            y: base.y - perpendicular.y * headWidth / 2)
+        let idealHeadLength = max(18, lineWidth * 4.8)
+        let headLength = min(idealHeadLength, max(lineWidth * 2.4, length * 0.34))
+        let headHalfWidth = headLength * 0.62
+        let base = CGPoint(x: end.x - ux * headLength,
+                           y: end.y - uy * headLength)
+        let left = CGPoint(x: base.x + perpendicular.x * headHalfWidth,
+                           y: base.y + perpendicular.y * headHalfWidth)
+        let right = CGPoint(x: base.x - perpendicular.x * headHalfWidth,
+                            y: base.y - perpendicular.y * headHalfWidth)
 
-        let head = NSBezierPath()
-        head.move(to: end)
-        head.line(to: left)
-        head.line(to: right)
-        head.close()
-        color.setFill()
-        head.fill()
+        color.setStroke()
+
+        let shaft = NSBezierPath()
+        shaft.move(to: start)
+        shaft.line(to: CGPoint(x: end.x - ux * lineWidth * 0.35,
+                               y: end.y - uy * lineWidth * 0.35))
+        shaft.lineWidth = lineWidth
+        shaft.lineCapStyle = .round
+        shaft.stroke()
+
+        let chevron = NSBezierPath()
+        chevron.move(to: left)
+        chevron.line(to: end)
+        chevron.line(to: right)
+        chevron.lineWidth = lineWidth * 1.08
+        chevron.lineCapStyle = .round
+        chevron.lineJoinStyle = .round
+        chevron.stroke()
     }
 }
 
@@ -660,11 +674,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var regionHotKey: EventHotKeyRef?
     private var fullScreenHotKey: EventHotKeyRef?
+    private var statusItemHotKey: EventHotKeyRef?
     private var hotKeyHandler: EventHandlerRef?
     private var isCapturing = false
     private var editors: [EditorWindowController] = []
     private var recordingSourceController: RecordingSourceWindowController?
     private var recordingStatusController: RecordingStatusController?
+    private var hasShownPermissionGuideThisLaunch = false
     @available(macOS 15.0, *)
     private lazy var recordingManager = RecordingManager()
 
@@ -673,6 +689,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerGlobalHotKeys()
 
         let arguments = CommandLine.arguments
+        if arguments.contains("--test-status-item-cycle") {
+            setStatusItemHidden(true)
+            let hiddenPass = !statusItem.isVisible && UserDefaults.standard.bool(forKey: "StatusItemHidden")
+            setStatusItemHidden(false)
+            let shownPass = statusItem.isVisible && !UserDefaults.standard.bool(forKey: "StatusItemHidden")
+            let result = hiddenPass && shownPass ? "PASS" : "FAIL"
+            FileHandle.standardOutput.write(Data("STATUS_ITEM_CYCLE_\(result)\n".utf8))
+            NSApp.terminate(nil)
+            return
+        }
         let argumentImagePath: String? = {
             guard let index = arguments.firstIndex(of: "--test-image"),
                   arguments.indices.contains(index + 1) else { return nil }
@@ -693,6 +719,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let controller = RecordingSourceWindowController { _ in }
             recordingSourceController = controller
             controller.showWindow(nil)
+        }
+        if arguments.contains("--test-recording-status-ui") {
+            NSApp.setActivationPolicy(.regular)
+            let status = RecordingStatusController()
+            recordingStatusController = status
+            status.onStop = { [weak self] in self?.stopActiveRecording() }
+            status.showPreparing()
         }
     }
 
@@ -731,6 +764,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(recordings)
 
         menu.addItem(.separator())
+        let hideStatusItem = NSMenuItem(title: "隐藏菜单栏图标（⌘⇧0 可恢复）",
+                                        action: #selector(hideStatusItem(_:)),
+                                        keyEquivalent: "")
+        hideStatusItem.target = self
+        menu.addItem(hideStatusItem)
+
+        menu.addItem(.separator())
         let help = NSMenuItem(title: "快捷键：R 矩形 · O 圆形 · A 箭头 · P 画笔", action: nil, keyEquivalent: "")
         help.isEnabled = false
         menu.addItem(help)
@@ -739,6 +779,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let quit = NSMenuItem(title: "退出轻截", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
         statusItem.menu = menu
+        applySavedStatusItemVisibility()
     }
 
     private func registerGlobalHotKeys() {
@@ -757,7 +798,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard status == noErr else { return status }
             let delegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
             DispatchQueue.main.async {
-                hotKeyID.id == 1 ? delegate.captureRegion(nil) : delegate.captureFullScreen(nil)
+                switch hotKeyID.id {
+                case 1: delegate.captureRegion(nil)
+                case 2: delegate.captureFullScreen(nil)
+                case 3: delegate.toggleStatusItemVisibility()
+                default: break
+                }
             }
             return noErr
         }, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), &hotKeyHandler)
@@ -765,14 +811,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let signature = OSType(0x514D5348) // QMSH
         let regionID = EventHotKeyID(signature: signature, id: 1)
         let fullID = EventHotKeyID(signature: signature, id: 2)
+        let statusItemID = EventHotKeyID(signature: signature, id: 3)
         let modifiers = UInt32(cmdKey | shiftKey)
         let regionStatus = RegisterEventHotKey(UInt32(kVK_ANSI_2), modifiers, regionID,
                                                 GetApplicationEventTarget(), 0, &regionHotKey)
         let fullStatus = RegisterEventHotKey(UInt32(kVK_ANSI_1), modifiers, fullID,
                                              GetApplicationEventTarget(), 0, &fullScreenHotKey)
-        if regionStatus != noErr || fullStatus != noErr {
-            FileHandle.standardError.write(Data("QuickMarkShot: hotkey registration failed (region=\(regionStatus), full=\(fullStatus))\n".utf8))
+        let statusItemStatus = RegisterEventHotKey(UInt32(kVK_ANSI_0), modifiers, statusItemID,
+                                                   GetApplicationEventTarget(), 0, &statusItemHotKey)
+        if regionStatus != noErr || fullStatus != noErr || statusItemStatus != noErr {
+            FileHandle.standardError.write(Data("QuickMarkShot: hotkey registration failed (region=\(regionStatus), full=\(fullStatus), status=\(statusItemStatus))\n".utf8))
         }
+    }
+
+    @objc private func hideStatusItem(_ sender: Any?) {
+        setStatusItemHidden(true)
+    }
+
+    private func toggleStatusItemVisibility() {
+        setStatusItemHidden(statusItem.isVisible)
+    }
+
+    private func applySavedStatusItemVisibility() {
+        let hidden = UserDefaults.standard.bool(forKey: "StatusItemHidden")
+        statusItem.isVisible = !hidden
+        reportStatusItemVisibility()
+    }
+
+    private func setStatusItemHidden(_ hidden: Bool) {
+        UserDefaults.standard.set(hidden, forKey: "StatusItemHidden")
+        statusItem.isVisible = !hidden
+        reportStatusItemVisibility()
+    }
+
+    private func reportStatusItemVisibility() {
+        let hidden = !statusItem.isVisible
+        FileHandle.standardError.write(Data("QuickMarkShot: status item hidden=\(hidden) visible=\(statusItem.isVisible)\n".utf8))
     }
 
     @objc private func captureRegion(_ sender: Any?) {
@@ -786,14 +860,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func capture(arguments: [String]) {
         guard !isCapturing else { return }
 
-        guard CGPreflightScreenCaptureAccess() else {
-            let granted = CGRequestScreenCaptureAccess()
-            if !granted {
-                showPermissionGuide()
-                return
-            }
-            return capture(arguments: arguments)
-        }
+        guard ensureScreenCaptureAccess() else { return }
 
         isCapturing = true
 
@@ -841,11 +908,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showRecordingSources(_ sender: Any?) {
-        guard CGPreflightScreenCaptureAccess() else {
-            _ = CGRequestScreenCaptureAccess()
-            showPermissionGuide()
-            return
-        }
+        guard ensureScreenCaptureAccess() else { return }
         guard #available(macOS 15.0, *) else {
             showCaptureError(RecordingError.unsupportedSystem.localizedDescription)
             return
@@ -865,15 +928,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func beginRecording(_ request: RecordingRequest) {
         let status = RecordingStatusController()
         recordingStatusController = status
-        status.onStop = { [weak self] in
-            self?.recordingStatusController?.markFinishing()
-            self?.recordingManager.stop()
-        }
+        status.onStop = { [weak self] in self?.stopActiveRecording() }
         status.showPreparing()
         recordingManager.start(request: request, started: { [weak status] in
             status?.markStarted()
         }, finished: { [weak self, weak status] url in
-            status?.finish(message: "已保存")
+            status?.dismiss()
             self?.recordingStatusController = nil
             NSWorkspace.shared.activateFileViewerSelecting([url])
         }, failed: { [weak self, weak status] error in
@@ -883,7 +943,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
     }
 
+    private func stopActiveRecording() {
+        recordingStatusController?.dismiss()
+        recordingStatusController = nil
+        openRecordingsDirectory()
+        if #available(macOS 15.0, *) {
+            recordingManager.stop()
+        }
+    }
+
     @objc private func openRecordingsFolder(_ sender: Any?) {
+        openRecordingsDirectory()
+    }
+
+    private func openRecordingsDirectory() {
         let directory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Movies", isDirectory: true)
             .appendingPathComponent("轻截录屏", isDirectory: true)
@@ -916,6 +989,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showPermissionGuide() {
+        guard !hasShownPermissionGuideThisLaunch else { return }
+        hasShownPermissionGuideThisLaunch = true
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "需要屏幕录制权限"
@@ -927,5 +1002,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private func ensureScreenCaptureAccess() -> Bool {
+        if CGPreflightScreenCaptureAccess() {
+            hasShownPermissionGuideThisLaunch = false
+            return true
+        }
+
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        let requestKey = "ScreenCapturePermissionRequestedBuild-\(build)"
+        if !UserDefaults.standard.bool(forKey: requestKey) {
+            UserDefaults.standard.set(true, forKey: requestKey)
+            if CGRequestScreenCaptureAccess() {
+                return true
+            }
+        }
+
+        showPermissionGuide()
+        return false
     }
 }
