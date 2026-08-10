@@ -663,6 +663,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeyHandler: EventHandlerRef?
     private var isCapturing = false
     private var editors: [EditorWindowController] = []
+    private var recordingSourceController: RecordingSourceWindowController?
+    private var recordingStatusController: RecordingStatusController?
+    @available(macOS 15.0, *)
+    private lazy var recordingManager = RecordingManager()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureStatusItem()
@@ -676,12 +680,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }()
         let testImagePath = argumentImagePath ?? ProcessInfo.processInfo.environment["QUICKMARK_TEST_IMAGE"]
         if let testImagePath, !testImagePath.isEmpty {
+            NSApp.setActivationPolicy(.regular)
             openEditor(at: URL(fileURLWithPath: testImagePath), ownsSourceFile: false)
         }
         if arguments.contains("--test-capture-fullscreen") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                 self?.captureFullScreen(nil)
             }
+        }
+        if arguments.contains("--test-recording-ui") {
+            NSApp.setActivationPolicy(.regular)
+            let controller = RecordingSourceWindowController { _ in }
+            recordingSourceController = controller
+            controller.showWindow(nil)
         }
     }
 
@@ -708,6 +719,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         open.keyEquivalentModifierMask = [.command]
         open.target = self
         menu.addItem(open)
+
+        menu.addItem(.separator())
+        let record = NSMenuItem(title: "开始录屏…", action: #selector(showRecordingSources(_:)), keyEquivalent: "5")
+        record.keyEquivalentModifierMask = [.command, .shift]
+        record.target = self
+        menu.addItem(record)
+
+        let recordings = NSMenuItem(title: "打开录屏文件夹", action: #selector(openRecordingsFolder(_:)), keyEquivalent: "")
+        recordings.target = self
+        menu.addItem(recordings)
 
         menu.addItem(.separator())
         let help = NSMenuItem(title: "快捷键：R 矩形 · O 圆形 · A 箭头 · P 画笔", action: nil, keyEquivalent: "")
@@ -819,6 +840,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func showRecordingSources(_ sender: Any?) {
+        guard CGPreflightScreenCaptureAccess() else {
+            _ = CGRequestScreenCaptureAccess()
+            showPermissionGuide()
+            return
+        }
+        guard #available(macOS 15.0, *) else {
+            showCaptureError(RecordingError.unsupportedSystem.localizedDescription)
+            return
+        }
+        if recordingManager.isRecording {
+            recordingStatusController?.window?.orderFrontRegardless()
+            return
+        }
+        let controller = RecordingSourceWindowController { [weak self] request in
+            self?.beginRecording(request)
+        }
+        recordingSourceController = controller
+        controller.showWindow(nil)
+    }
+
+    @available(macOS 15.0, *)
+    private func beginRecording(_ request: RecordingRequest) {
+        let status = RecordingStatusController()
+        recordingStatusController = status
+        status.onStop = { [weak self] in
+            self?.recordingStatusController?.markFinishing()
+            self?.recordingManager.stop()
+        }
+        status.showPreparing()
+        recordingManager.start(request: request, started: { [weak status] in
+            status?.markStarted()
+        }, finished: { [weak self, weak status] url in
+            status?.finish(message: "已保存")
+            self?.recordingStatusController = nil
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }, failed: { [weak self, weak status] error in
+            status?.dismiss()
+            self?.recordingStatusController = nil
+            self?.showCaptureError(error.localizedDescription)
+        })
+    }
+
+    @objc private func openRecordingsFolder(_ sender: Any?) {
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Movies", isDirectory: true)
+            .appendingPathComponent("轻截录屏", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(directory)
+    }
+
     private func openEditor(at url: URL, ownsSourceFile: Bool) {
         guard let image = NSImage(contentsOf: url), image.isValid else {
             showCaptureError("无法读取图片。")
@@ -857,9 +929,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 }
-
-let application = NSApplication.shared
-private let applicationDelegate = AppDelegate()
-application.delegate = applicationDelegate
-application.setActivationPolicy(.accessory)
-application.run()

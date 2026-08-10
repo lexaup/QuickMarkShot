@@ -8,11 +8,7 @@ DESTINATION_APP="$DESTINATION_DIR/轻截.app"
 SOURCE_APP=$("$SCRIPT_DIR/build.sh" | tail -n 1)
 mkdir -p "$DESTINATION_DIR"
 
-if [[ -e "$DESTINATION_APP" ]]; then
-  timestamp=$(date +%Y%m%d-%H%M%S)
-  mv "$DESTINATION_APP" "$DESTINATION_DIR/轻截-旧版-$timestamp.app"
-fi
-
+pkill -x QuickMarkShot 2>/dev/null || true
 ditto "$SOURCE_APP" "$DESTINATION_APP"
 xattr -cr "$DESTINATION_APP"
 codesign --verify --deep --strict "$DESTINATION_APP"

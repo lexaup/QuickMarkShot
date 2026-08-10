@@ -8,20 +8,24 @@
     <string>轻截</string>
     <key>CFBundleExecutable</key>
     <string>QuickMarkShot</string>
-    <key>CFBundleIdentifier</key>
-    <string>local.codex.quickmarkshot</string>
+	<key>CFBundleIdentifier</key>
+	<string>local.codex.quickmarkshot</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
     <string>轻截</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>2.0</string>
+	<key>CFBundleVersion</key>
+	<string>2</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>15.0</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>轻截需要访问屏幕内容，用于截图和录制你主动选择的画面。</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>
