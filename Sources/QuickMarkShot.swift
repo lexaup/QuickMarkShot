@@ -675,6 +675,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var regionHotKey: EventHotKeyRef?
     private var fullScreenHotKey: EventHotKeyRef?
     private var statusItemHotKey: EventHotKeyRef?
+    private var recordingHotKey: EventHotKeyRef?
     private var hotKeyHandler: EventHandlerRef?
     private var isCapturing = false
     private var editors: [EditorWindowController] = []
@@ -716,10 +717,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if arguments.contains("--test-recording-ui") {
             NSApp.setActivationPolicy(.regular)
-            let controller = RecordingSourceWindowController { _ in }
-            recordingSourceController = controller
-            controller.onClose = { [weak self] in self?.recordingSourceController = nil }
-            controller.showWindow(nil)
+            showRecordingSources(nil)
         }
         if arguments.contains("--test-recording-status-ui") {
             NSApp.setActivationPolicy(.regular)
@@ -803,6 +801,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case 1: delegate.captureRegion(nil)
                 case 2: delegate.captureFullScreen(nil)
                 case 3: delegate.toggleStatusItemVisibility()
+                case 4: delegate.showRecordingSources(nil)
                 default: break
                 }
             }
@@ -813,6 +812,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let regionID = EventHotKeyID(signature: signature, id: 1)
         let fullID = EventHotKeyID(signature: signature, id: 2)
         let statusItemID = EventHotKeyID(signature: signature, id: 3)
+        let recordingID = EventHotKeyID(signature: signature, id: 4)
         let modifiers = UInt32(cmdKey | shiftKey)
         let regionStatus = RegisterEventHotKey(UInt32(kVK_ANSI_2), modifiers, regionID,
                                                 GetApplicationEventTarget(), 0, &regionHotKey)
@@ -820,8 +820,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                              GetApplicationEventTarget(), 0, &fullScreenHotKey)
         let statusItemStatus = RegisterEventHotKey(UInt32(kVK_ANSI_0), modifiers, statusItemID,
                                                    GetApplicationEventTarget(), 0, &statusItemHotKey)
-        if regionStatus != noErr || fullStatus != noErr || statusItemStatus != noErr {
-            FileHandle.standardError.write(Data("QuickMarkShot: hotkey registration failed (region=\(regionStatus), full=\(fullStatus), status=\(statusItemStatus))\n".utf8))
+        let recordingStatus = RegisterEventHotKey(UInt32(kVK_ANSI_5), modifiers, recordingID,
+                                                  GetApplicationEventTarget(), 0, &recordingHotKey)
+        if regionStatus != noErr || fullStatus != noErr || statusItemStatus != noErr || recordingStatus != noErr {
+            FileHandle.standardError.write(Data("QuickMarkShot: hotkey registration failed (region=\(regionStatus), full=\(fullStatus), status=\(statusItemStatus), recording=\(recordingStatus))\n".utf8))
         }
     }
 
