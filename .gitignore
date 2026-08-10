@@ -1,0 +1,10 @@
+.DS_Store
+build/
+*.app
+*.zip
+*.mp4
+*.mov
+*.dSYM/
+.build/
+.swiftpm/
+xcuserdata/
