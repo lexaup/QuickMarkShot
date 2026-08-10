@@ -16,7 +16,9 @@ mkdir -p "$RESOURCES_DIR"
 mkdir -p "$OUTPUT_DIR"
 
 xcrun swiftc \
+  -target arm64-apple-macos15.0 \
   -swift-version 5 \
+  -warnings-as-errors \
   -O \
   -framework AppKit \
   -framework Carbon \

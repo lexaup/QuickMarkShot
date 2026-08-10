@@ -154,8 +154,9 @@ final class RegionSelectionController: NSWindowController {
     }
 }
 
-final class RecordingSourceWindowController: NSWindowController {
+final class RecordingSourceWindowController: NSWindowController, NSWindowDelegate {
     private let onStart: (RecordingRequest) -> Void
+    var onClose: (() -> Void)?
     private var content: SCShareableContent?
     private var displays: [SCDisplay] = []
     private var windows: [SCWindow] = []
@@ -177,6 +178,8 @@ final class RecordingSourceWindowController: NSWindowController {
     private let zoomPopup = NSPopUpButton()
     private let progress = NSProgressIndicator()
     private let messageLabel = NSTextField(labelWithString: "正在读取可录制内容…")
+    private let retryButton = NSButton(title: "重新检查", target: nil, action: nil)
+    private let openSettingsButton = NSButton(title: "打开系统设置", target: nil, action: nil)
     private let startButton = NSButton(title: "开始录制", target: nil, action: nil)
 
     init(onStart: @escaping (RecordingRequest) -> Void) {
@@ -189,6 +192,7 @@ final class RecordingSourceWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         window.titlebarSeparatorStyle = .none
         super.init(window: window)
+        window.delegate = self
         configureInterface()
         loadContent()
     }
@@ -202,6 +206,10 @@ final class RecordingSourceWindowController: NSWindowController {
         window?.center()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onClose?()
     }
 
     private func configureInterface() {
@@ -250,7 +258,19 @@ final class RecordingSourceWindowController: NSWindowController {
         messageLabel.textColor = .secondaryLabelColor
         messageLabel.font = .systemFont(ofSize: 12)
 
-        let loadingRow = NSStackView(views: [progress, messageLabel])
+        retryButton.target = self
+        retryButton.action = #selector(retryLoading(_:))
+        retryButton.bezelStyle = .rounded
+        retryButton.controlSize = .small
+        retryButton.isHidden = true
+
+        openSettingsButton.target = self
+        openSettingsButton.action = #selector(openScreenCaptureSettings(_:))
+        openSettingsButton.bezelStyle = .rounded
+        openSettingsButton.controlSize = .small
+        openSettingsButton.isHidden = true
+
+        let loadingRow = NSStackView(views: [progress, messageLabel, retryButton, openSettingsButton])
         loadingRow.orientation = .horizontal
         loadingRow.alignment = .centerY
         loadingRow.spacing = 8
@@ -304,6 +324,13 @@ final class RecordingSourceWindowController: NSWindowController {
     }
 
     private func loadContent() {
+        progress.isHidden = false
+        progress.startAnimation(nil)
+        retryButton.isHidden = true
+        openSettingsButton.isHidden = true
+        messageLabel.stringValue = "正在读取可录制内容…"
+        sourcePopup.isEnabled = false
+        startButton.isEnabled = false
         Task { [weak self] in
             do {
                 let content = try await SCShareableContent.excludingDesktopWindows(false,
@@ -342,6 +369,8 @@ final class RecordingSourceWindowController: NSWindowController {
 
         progress.stopAnimation(nil)
         progress.isHidden = true
+        retryButton.isHidden = true
+        openSettingsButton.isHidden = true
         messageLabel.stringValue = "选择完成后即可开始"
         sourcePopup.isEnabled = true
         refreshSources()
@@ -350,8 +379,21 @@ final class RecordingSourceWindowController: NSWindowController {
     private func showLoadError(_ error: Error) {
         progress.stopAnimation(nil)
         progress.isHidden = true
-        messageLabel.stringValue = "无法读取屏幕内容：\(error.localizedDescription)"
+        messageLabel.stringValue = "需要允许轻截访问屏幕内容"
+        retryButton.isHidden = false
+        openSettingsButton.isHidden = false
+        sourcePopup.isEnabled = false
         startButton.isEnabled = false
+        FileHandle.standardError.write(Data("QuickMarkShot: shareable content failed: \(error.localizedDescription)\n".utf8))
+    }
+
+    @objc private func retryLoading(_ sender: Any?) {
+        loadContent()
+    }
+
+    @objc private func openScreenCaptureSettings(_ sender: Any?) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func modeChanged(_ sender: NSSegmentedControl) {
@@ -476,6 +518,8 @@ final class RecordingSourceWindowController: NSWindowController {
                                            $0.bundleIdentifier == Bundle.main.bundleIdentifier
                                        } ?? [],
                                        trackingRect: trackingRect)
+        startButton.isEnabled = false
+        startButton.title = "正在启动…"
         close()
         onStart(request)
     }
@@ -608,21 +652,6 @@ final class RecordingStatusController: NSWindowController {
         }
     }
 
-    func markFinishing() {
-        stateLabel.stringValue = "正在保存…"
-        timer?.invalidate()
-        timer = nil
-    }
-
-    func finish(message: String) {
-        timer?.invalidate()
-        timer = nil
-        stateLabel.stringValue = message
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
-            self?.window?.orderOut(nil)
-        }
-    }
-
     func dismiss() {
         timer?.invalidate()
         timer = nil
@@ -702,6 +731,7 @@ final class RecordingManager: NSObject, SCStreamDelegate, SCRecordingOutputDeleg
             self.rawOutputURL = rawURL
             self.recordingRequest = request
             self.isRecording = true
+            FileHandle.standardError.write(Data("QuickMarkShot: recording start requested mode=\(request.mode.title) output=\(url.path)\n".utf8))
             stream.startCapture { [weak self] error in
                 if let error {
                     self?.completeWithError(error)
@@ -742,6 +772,7 @@ final class RecordingManager: NSObject, SCStreamDelegate, SCRecordingOutputDeleg
             self.stream = nil
             self.recordingOutput = nil
             let samples = self.cursorTracker?.stop() ?? []
+            FileHandle.standardError.write(Data("QuickMarkShot: recording capture finished samples=\(samples.count)\n".utf8))
             self.cursorTracker = nil
             if let request = self.recordingRequest, request.followsCursor {
                 MouseZoomProcessor.process(inputURL: rawOutputURL,
@@ -756,7 +787,15 @@ final class RecordingManager: NSObject, SCStreamDelegate, SCRecordingOutputDeleg
                             try? FileManager.default.removeItem(at: rawOutputURL)
                             self.finishedCallback?(outputURL)
                         case .failure(let error):
-                            self.errorCallback?(error)
+                            do {
+                                try? FileManager.default.removeItem(at: outputURL)
+                                try FileManager.default.moveItem(at: rawOutputURL, to: outputURL)
+                                self.finishedCallback?(outputURL)
+                                let fallbackError = RecordingError.zoomFallback(error.localizedDescription)
+                                self.errorCallback?(fallbackError)
+                            } catch {
+                                self.errorCallback?(error)
+                            }
                         }
                         self.clearCallbacks()
                     }
@@ -821,10 +860,29 @@ final class RecordingManager: NSObject, SCStreamDelegate, SCRecordingOutputDeleg
             configuration.sourceRect = region
             pointSize = region.size
             scale = screenScale(for: request.display)
-        case .display, .application:
+        case .display:
             pointSize = CGSize(width: request.display?.width ?? 1920,
                                height: request.display?.height ?? 1080)
-            scale = screenScale(for: request.display)
+            scale = 1
+        case .application:
+            if let display = request.display {
+                let visibleRect = request.trackingRect.intersection(display.frame)
+                if !visibleRect.isNull, !visibleRect.isEmpty {
+                    let localRect = CGRect(x: visibleRect.minX - display.frame.minX,
+                                           y: visibleRect.minY - display.frame.minY,
+                                           width: visibleRect.width,
+                                           height: visibleRect.height)
+                    configuration.sourceRect = localRect
+                    pointSize = localRect.size
+                    scale = screenScale(for: display)
+                } else {
+                    pointSize = CGSize(width: display.width, height: display.height)
+                    scale = 1
+                }
+            } else {
+                pointSize = CGSize(width: 1280, height: 720)
+                scale = 1
+            }
         }
 
         let pixelSize = fittedPixelSize(CGSize(width: pointSize.width * scale,
@@ -858,7 +916,11 @@ final class RecordingManager: NSObject, SCStreamDelegate, SCRecordingOutputDeleg
             self.recordingOutput = nil
             _ = self.cursorTracker?.stop()
             self.cursorTracker = nil
+            if let rawOutputURL = self.rawOutputURL {
+                try? FileManager.default.removeItem(at: rawOutputURL)
+            }
             self.errorCallback?(error)
+            FileHandle.standardError.write(Data("QuickMarkShot: recording failed: \(error.localizedDescription)\n".utf8))
             self.clearCallbacks()
         }
     }
@@ -869,11 +931,12 @@ final class RecordingManager: NSObject, SCStreamDelegate, SCRecordingOutputDeleg
         errorCallback = nil
         recordingRequest = nil
         rawOutputURL = nil
+        outputURL = nil
     }
 
     private static func timestamp() -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
         return formatter.string(from: Date())
     }
 }
@@ -881,11 +944,13 @@ final class RecordingManager: NSObject, SCStreamDelegate, SCRecordingOutputDeleg
 enum RecordingError: LocalizedError {
     case missingSource
     case unsupportedSystem
+    case zoomFallback(String)
 
     var errorDescription: String? {
         switch self {
         case .missingSource: return "没有可用的录制来源。"
         case .unsupportedSystem: return "录屏需要 macOS 15 或更高版本。"
+        case .zoomFallback(let detail): return "鼠标跟随放大处理失败，已保留原始录屏。\n\n\(detail)"
         }
     }
 }

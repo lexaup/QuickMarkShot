@@ -42,13 +42,11 @@ final class CursorTracker {
 enum MouseZoomError: LocalizedError {
     case missingVideo
     case cannotCreateExporter
-    case exportFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .missingVideo: return "录制文件中没有可处理的视频轨道。"
         case .cannotCreateExporter: return "无法创建鼠标跟随放大视频。"
-        case .exportFailed(let detail): return "鼠标跟随放大处理失败：\(detail)"
         }
     }
 }
@@ -59,43 +57,55 @@ enum MouseZoomProcessor {
                         samples: [CursorSample],
                         zoomAmount: CGFloat,
                         completion: @escaping (Result<Void, Error>) -> Void) {
-        let asset = AVURLAsset(url: inputURL)
-        guard let track = asset.tracks(withMediaType: .video).first else {
-            completion(.failure(MouseZoomError.missingVideo))
-            return
-        }
+        Task {
+            do {
+                let asset = AVURLAsset(url: inputURL)
+                guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+                    throw MouseZoomError.missingVideo
+                }
+                let size = try await track.load(.naturalSize)
+                let duration = try await asset.load(.duration)
+                let instructions = makeInstructions(track: track,
+                                                    size: size,
+                                                    duration: duration,
+                                                    samples: samples,
+                                                    zoomAmount: zoomAmount)
+                let videoComposition = makeVideoComposition(size: size, instructions: instructions)
 
-        let size = track.naturalSize
-        let duration = asset.duration
-        let videoComposition = AVMutableVideoComposition()
-        videoComposition.renderSize = size
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
-        videoComposition.instructions = makeInstructions(track: track,
-                                                         size: size,
-                                                         duration: duration,
-                                                         samples: samples,
-                                                         zoomAmount: zoomAmount)
-
-        try? FileManager.default.removeItem(at: outputURL)
-        guard let exporter = AVAssetExportSession(asset: asset,
-                                                  presetName: AVAssetExportPresetHighestQuality) else {
-            completion(.failure(MouseZoomError.cannotCreateExporter))
-            return
-        }
-        exporter.outputURL = outputURL
-        exporter.outputFileType = .mp4
-        exporter.videoComposition = videoComposition
-        exporter.shouldOptimizeForNetworkUse = true
-        exporter.exportAsynchronously {
-            switch exporter.status {
-            case .completed:
+                try? FileManager.default.removeItem(at: outputURL)
+                guard let exporter = AVAssetExportSession(asset: asset,
+                                                          presetName: AVAssetExportPresetHighestQuality) else {
+                    throw MouseZoomError.cannotCreateExporter
+                }
+                exporter.videoComposition = videoComposition
+                exporter.shouldOptimizeForNetworkUse = true
+                try await exporter.export(to: outputURL, as: .mp4)
                 completion(.success(()))
-            case .failed, .cancelled:
-                completion(.failure(MouseZoomError.exportFailed(exporter.error?.localizedDescription ?? "未知错误")))
-            default:
-                completion(.failure(MouseZoomError.exportFailed("导出未完成")))
+            } catch {
+                completion(.failure(error))
             }
         }
+    }
+
+    private static func makeVideoComposition(size: CGSize,
+                                             instructions: [AVVideoCompositionInstructionProtocol]) -> AVVideoComposition {
+        if #available(macOS 26.0, *) {
+            let configuration = AVVideoComposition.Configuration(frameDuration: CMTime(value: 1, timescale: 30),
+                                                                  instructions: instructions,
+                                                                  renderSize: size)
+            return AVVideoComposition(configuration: configuration)
+        }
+        return makeLegacyVideoComposition(size: size, instructions: instructions)
+    }
+
+    @available(macOS, introduced: 15.0, obsoleted: 26.0)
+    private static func makeLegacyVideoComposition(size: CGSize,
+                                                   instructions: [AVVideoCompositionInstructionProtocol]) -> AVVideoComposition {
+        let composition = AVMutableVideoComposition()
+        composition.renderSize = size
+        composition.frameDuration = CMTime(value: 1, timescale: 30)
+        composition.instructions = instructions
+        return composition
     }
 
     private static func makeInstructions(track: AVAssetTrack,
@@ -145,20 +155,50 @@ enum MouseZoomProcessor {
 
             let nextTime = min(totalSeconds, time + frameStep)
             let nextTransform = transform(center: center, size: size, zoom: zoomAmount)
-            let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
             let range = CMTimeRange(start: CMTime(seconds: time, preferredTimescale: 600),
                                     end: CMTime(seconds: nextTime, preferredTimescale: 600))
-            layer.setTransformRamp(fromStart: previousTransform,
-                                   toEnd: nextTransform,
-                                   timeRange: range)
-            let instruction = AVMutableVideoCompositionInstruction()
-            instruction.timeRange = range
-            instruction.layerInstructions = [layer]
+            let instruction = makeInstruction(track: track,
+                                              range: range,
+                                              startTransform: previousTransform,
+                                              endTransform: nextTransform)
             instructions.append(instruction)
             previousTransform = nextTransform
             time = nextTime
         }
         return instructions
+    }
+
+    private static func makeInstruction(track: AVAssetTrack,
+                                        range: CMTimeRange,
+                                        startTransform: CGAffineTransform,
+                                        endTransform: CGAffineTransform) -> AVVideoCompositionInstructionProtocol {
+        if #available(macOS 26.0, *) {
+            var layerConfiguration = AVVideoCompositionLayerInstruction.Configuration(assetTrack: track)
+            layerConfiguration.addTransformRamp(.init(timeRange: range,
+                                                       start: startTransform,
+                                                       end: endTransform))
+            let layer = AVVideoCompositionLayerInstruction(configuration: layerConfiguration)
+            let instructionConfiguration = AVVideoCompositionInstruction.Configuration(layerInstructions: [layer],
+                                                                                         timeRange: range)
+            return AVVideoCompositionInstruction(configuration: instructionConfiguration)
+        }
+        return makeLegacyInstruction(track: track,
+                                     range: range,
+                                     startTransform: startTransform,
+                                     endTransform: endTransform)
+    }
+
+    @available(macOS, introduced: 15.0, obsoleted: 26.0)
+    private static func makeLegacyInstruction(track: AVAssetTrack,
+                                              range: CMTimeRange,
+                                              startTransform: CGAffineTransform,
+                                              endTransform: CGAffineTransform) -> AVVideoCompositionInstructionProtocol {
+        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        layer.setTransformRamp(fromStart: startTransform, toEnd: endTransform, timeRange: range)
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = range
+        instruction.layerInstructions = [layer]
+        return instruction
     }
 
     private static func snappedTarget(_ point: CGPoint, zoom: CGFloat) -> CGPoint {

@@ -718,6 +718,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.setActivationPolicy(.regular)
             let controller = RecordingSourceWindowController { _ in }
             recordingSourceController = controller
+            controller.onClose = { [weak self] in self?.recordingSourceController = nil }
             controller.showWindow(nil)
         }
         if arguments.contains("--test-recording-status-ui") {
@@ -908,19 +909,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showRecordingSources(_ sender: Any?) {
-        guard ensureScreenCaptureAccess() else { return }
         guard #available(macOS 15.0, *) else {
-            showCaptureError(RecordingError.unsupportedSystem.localizedDescription)
+            showRecordingError(RecordingError.unsupportedSystem.localizedDescription)
             return
         }
         if recordingManager.isRecording {
             recordingStatusController?.window?.orderFrontRegardless()
             return
         }
+        requestScreenCaptureAccessIfNeeded()
         let controller = RecordingSourceWindowController { [weak self] request in
             self?.beginRecording(request)
         }
         recordingSourceController = controller
+        controller.onClose = { [weak self] in self?.recordingSourceController = nil }
         controller.showWindow(nil)
     }
 
@@ -939,7 +941,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }, failed: { [weak self, weak status] error in
             status?.dismiss()
             self?.recordingStatusController = nil
-            self?.showCaptureError(error.localizedDescription)
+            self?.showRecordingError(error.localizedDescription)
         })
     }
 
@@ -988,6 +990,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
+    private func showRecordingError(_ detail: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "无法完成录屏"
+        alert.informativeText = detail
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "知道了")
+        alert.runModal()
+    }
+
     private func showPermissionGuide() {
         guard !hasShownPermissionGuideThisLaunch else { return }
         hasShownPermissionGuideThisLaunch = true
@@ -1010,16 +1022,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
 
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
-        let requestKey = "ScreenCapturePermissionRequestedBuild-\(build)"
-        if !UserDefaults.standard.bool(forKey: requestKey) {
-            UserDefaults.standard.set(true, forKey: requestKey)
-            if CGRequestScreenCaptureAccess() {
-                return true
-            }
-        }
+        if requestScreenCaptureAccessIfNeeded() { return true }
 
         showPermissionGuide()
         return false
+    }
+
+    @discardableResult
+    private func requestScreenCaptureAccessIfNeeded() -> Bool {
+        if CGPreflightScreenCaptureAccess() { return true }
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        let requestKey = "ScreenCapturePermissionRequestedBuild-\(build)"
+        guard !UserDefaults.standard.bool(forKey: requestKey) else { return false }
+        UserDefaults.standard.set(true, forKey: requestKey)
+        return CGRequestScreenCaptureAccess()
     }
 }
