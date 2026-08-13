@@ -34,7 +34,7 @@ QuickMarkShot is a lightweight native macOS screenshot, quick annotation, and sc
 
 ## Install
 
-Download `轻截-macOS.zip` from [Releases](https://github.com/lexaup/QuickMarkShot/releases), extract it, and move `轻截.app` to Applications. Approve the first launch under System Settings → Privacy & Security if blocked. Grant capture permission when prompted, then relaunch the app.
+Download `QuickMarkShot-macOS.zip` from [Releases](https://github.com/lexaup/QuickMarkShot/releases), extract it, and move `轻截.app` to Applications. Approve the first launch under System Settings → Privacy & Security if blocked. Grant capture permission when prompted, then relaunch the app.
 
 ## Shortcuts
 

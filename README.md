@@ -34,7 +34,7 @@
 
 ## 安装
 
-从 [Releases](https://github.com/lexaup/QuickMarkShot/releases) 下载 `轻截-macOS.zip`，解压并将 `轻截.app` 移入“应用程序”。首次启动被拦截时，在“系统设置 → 隐私与安全性”确认打开；首次捕获时按提示授权并重启应用。
+从 [Releases](https://github.com/lexaup/QuickMarkShot/releases) 下载 `QuickMarkShot-macOS.zip`，解压并将 `轻截.app` 移入“应用程序”。首次启动被拦截时，在“系统设置 → 隐私与安全性”确认打开；首次捕获时按提示授权并重启应用。
 
 ## 快捷键
 

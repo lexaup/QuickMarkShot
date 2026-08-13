@@ -4,7 +4,7 @@
 
 - 中文：完成全局录屏快捷键及最终测试、录屏与打包路径。
 - English: Completed the global recording shortcut and final tested recording/package path.
-- Retained original binary / 保留原始安装包：`轻截-macOS.zip`.
+- Retained original binary / 保留原始安装包：Release 资产 `QuickMarkShot-macOS.zip`（原始构建文件名为 `轻截-macOS.zip`）。
 
 ## v2.1-build4 — Build 4
 
