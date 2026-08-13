@@ -8,7 +8,7 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build and verify non-interactively
         run: |
           chmod +x build.sh Scripts/verify.sh
