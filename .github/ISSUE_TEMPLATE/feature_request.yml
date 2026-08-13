@@ -1,0 +1,16 @@
+name: Feature request
+description: Propose a focused capture or annotation improvement
+title: "[Feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Minimal desired outcome
+    validations:
+      required: true

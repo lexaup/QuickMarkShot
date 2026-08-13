@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible QuickMarkShot problem
+title: "[Bug] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: App version and build
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: macOS version and Mac model/architecture
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Capture source
+      options: [Screenshot, Display recording, Region recording, Window recording, Application recording, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: permission
+    attributes:
+      label: Screen & System Audio Recording permission state
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual result; redacted diagnostics
+      description: Remove tokens, names, private paths, and captured private content.
+    validations:
+      required: true

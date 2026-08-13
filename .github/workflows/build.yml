@@ -1,0 +1,16 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify non-interactively
+        run: |
+          chmod +x build.sh Scripts/verify.sh
+          ./Scripts/verify.sh
+      # TCC-dependent screenshot, audio, and source-selection tests remain manual release checks.
